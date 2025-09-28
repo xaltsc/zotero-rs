@@ -3,6 +3,7 @@ use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest::Url;
 use serde_json::Value;
+use std::str::FromStr;
 use std::vec::IntoIter;
 use thiserror::Error;
 
@@ -74,6 +75,15 @@ impl Zotero {
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", self.api_key))?,
+        );
+        Ok(headers)
+    }
+
+    fn default_write_headers(&self) -> Result<HeaderMap, ZoteroError> {
+        let mut headers = self.default_headers()?;
+        headers.insert(
+            "Zotero-Write-Token",
+            HeaderValue::from_str(&uuid::Uuid::new_v4().to_string())?,
         );
         Ok(headers)
     }
@@ -168,6 +178,86 @@ impl Zotero {
         ))
     }
 
+    fn write_request(
+        &self,
+        request_method: reqwest::Method,
+        url: Url,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let mut attempts = 0;
+        let mut backoff = 0.0;
+        let mut headers = self.default_write_headers()?;
+        if let Some(v) = if_unmodified_since {
+            headers.insert(
+                "If-Unmodified-Since-Version",
+                HeaderValue::from_str(&format!("{v}"))?,
+            );
+        }
+        while attempts < self.max_retries {
+            let response = self
+                .client
+                .request(request_method.clone(), url.clone())
+                .json(&data)
+                .headers(headers.clone())
+                .send()?;
+
+            if let Some(bo) = response.headers().get("backoff") {
+                if let Ok(val) = bo.to_str() {
+                    if let Ok(parsed_backoff) = val.parse::<f64>() {
+                        backoff = parsed_backoff;
+                    }
+                }
+            } else if let Some(retry_after) = response.headers().get("retry-after") {
+                if let Ok(val) = retry_after.to_str() {
+                    if let Ok(parsed_backoff) = val.parse::<f64>() {
+                        backoff = parsed_backoff;
+                    }
+                }
+            }
+
+            let status = response.status();
+            match status {
+                reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                    std::thread::sleep(std::time::Duration::from_secs_f64(backoff));
+                    attempts += 1;
+                    continue;
+                }
+                reqwest::StatusCode::BAD_REQUEST => return Err(ZoteroError::BadRequest),
+                reqwest::StatusCode::CONFLICT => return Err(ZoteroError::Conflict),
+                reqwest::StatusCode::PRECONDITION_FAILED => {
+                    return Err(ZoteroError::PreconditionFailed)
+                }
+                reqwest::StatusCode::PAYLOAD_TOO_LARGE => return Err(ZoteroError::EntityTooLarge),
+                reqwest::StatusCode::PRECONDITION_REQUIRED => {
+                    return Err(ZoteroError::PreconditionRequired)
+                }
+                _ => (),
+            }
+
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            if content_type.starts_with("application/json") {
+                let json: Value = response.json()?;
+                return Ok(json);
+            } else if content_type.starts_with("text/html") {
+                let text = response.text()?;
+                return Ok(Value::String(text));
+            } else {
+                return Err(ZoteroError::UnsupportedContentType(
+                    content_type.to_string(),
+                ));
+            }
+        }
+
+        Err(ZoteroError::TooManyRequests(
+            "429: Too Many Requests".to_string(),
+        ))
+    }
     pub fn get_key_info(&self, params: Option<&[(&str, &str)]>) -> Result<Value, ZoteroError> {
         let url = self.build_url(&format!("keys/{}", self.api_key), params)?;
         self.handle_response(url)
@@ -387,6 +477,69 @@ impl Zotero {
 
     pub fn get_collections_in_batch(&self, batch_size: usize) -> ZoteroCollectionBatcher {
         ZoteroCollectionBatcher::new(self, batch_size)
+    }
+
+    pub fn create_items(
+        &self,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url("items", None)?;
+        self.write_request(reqwest::Method::POST, url, data, if_unmodified_since)
+    }
+    pub fn update_item_full(
+        &self,
+        item_key: &str,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url(&format!("items/{}", item_key), None)?;
+        self.write_request(reqwest::Method::PUT, url, data, if_unmodified_since)
+    }
+    pub fn update_item_patch(
+        &self,
+        item_key: &str,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url(&format!("items/{}", item_key), None)?;
+        self.write_request(reqwest::Method::PATCH, url, data, if_unmodified_since)
+    }
+    pub fn delete_item(
+        &self,
+        item_key: &str,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url(&format!("items/{}", item_key), None)?;
+        self.write_request(reqwest::Method::DELETE, url, data, if_unmodified_since)
+    }
+
+    pub fn create_collection(
+        &self,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url("collections", None)?;
+        self.write_request(reqwest::Method::POST, url, data, if_unmodified_since)
+    }
+    pub fn update_collection(
+        &self,
+        collection_id: &str,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url(&format!("collections/{}", collection_id), None)?;
+        self.write_request(reqwest::Method::PUT, url, data, if_unmodified_since)
+    }
+    pub fn delete_collection(
+        &self,
+        collection_id: &str,
+        data: Value,
+        if_unmodified_since: Option<usize>,
+    ) -> Result<Value, ZoteroError> {
+        let url = self.build_url(&format!("collections/{}", collection_id), None)?;
+        self.write_request(reqwest::Method::DELETE, url, data, if_unmodified_since)
     }
 }
 

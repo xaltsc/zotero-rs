@@ -16,4 +16,20 @@ pub enum ZoteroError {
     TooManyRequests(String),
     #[error("Failed to retrieve file: {0}")]
     FileRetrievalError(String),
+
+    // 400
+    #[error("Bad request, invalid JSON")]
+    BadRequest,
+    // 409
+    #[error("The target library is locked")]
+    Conflict,
+    // 412
+    #[error("Request already submitted or version out of date")]
+    PreconditionFailed,
+    // 413
+    #[error("Too many items submitted")]
+    EntityTooLarge,
+    // 428
+    #[error("If-Unmodified-Since-Version was not provided")]
+    PreconditionRequired,
 }
