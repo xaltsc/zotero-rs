@@ -268,6 +268,23 @@ impl Zotero {
         self.handle_response(url)
     }
 
+    pub fn get_item_template(
+        &self,
+        item_type: &str,
+        linkmode: Option<&str>,
+    ) -> Result<Value, ZoteroError> {
+        let mut params: Vec<(&str, &str)> = Vec::new();
+        params.push(("itemType", item_type));
+        if item_type == "attachment" {
+            if let Some(lm) = linkmode {
+                params.push(("linkMode", lm));
+            }
+        }
+
+        let url = self.build_url_no_lib("items/new", Some(&params))?;
+        dbg!(&url);
+        self.handle_response(url)
+    }
     pub fn get_collections(&self, params: Option<&[(&str, &str)]>) -> Result<Value, ZoteroError> {
         let url = self.build_url("collections", params)?;
         self.handle_response(url)
