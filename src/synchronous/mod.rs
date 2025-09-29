@@ -83,7 +83,7 @@ impl Zotero {
         let mut headers = self.default_headers()?;
         headers.insert(
             "Zotero-Write-Token",
-            HeaderValue::from_str(&uuid::Uuid::new_v4().to_string())?,
+            HeaderValue::from_str(&uuid::Uuid::new_v4().simple().to_string())?,
         );
         Ok(headers)
     }
