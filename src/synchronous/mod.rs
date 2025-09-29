@@ -2,7 +2,7 @@ use bytes::Bytes;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
 use reqwest::Url;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::str::FromStr;
 use std::vec::IntoIter;
 use thiserror::Error;
@@ -182,7 +182,7 @@ impl Zotero {
         &self,
         request_method: reqwest::Method,
         url: Url,
-        data: Value,
+        data: Option<Value>,
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let mut attempts = 0;
@@ -195,12 +195,16 @@ impl Zotero {
             );
         }
         while attempts < self.max_retries {
-            let response = self
+            let response_template = self
                 .client
                 .request(request_method.clone(), url.clone())
-                .json(&data)
-                .headers(headers.clone())
-                .send()?;
+                .headers(headers.clone());
+            let response = if let Some(ref d) = data {
+                response_template.json(&d)
+            } else {
+                response_template
+            }
+            .send()?;
 
             if let Some(bo) = response.headers().get("backoff") {
                 if let Ok(val) = bo.to_str() {
@@ -502,7 +506,7 @@ impl Zotero {
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url("items", None)?;
-        self.write_request(reqwest::Method::POST, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::POST, url, Some(data), if_unmodified_since)
     }
     pub fn update_item_full(
         &self,
@@ -511,7 +515,7 @@ impl Zotero {
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url(&format!("items/{}", item_key), None)?;
-        self.write_request(reqwest::Method::PUT, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::PUT, url, Some(data), if_unmodified_since)
     }
     pub fn update_item_patch(
         &self,
@@ -520,16 +524,15 @@ impl Zotero {
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url(&format!("items/{}", item_key), None)?;
-        self.write_request(reqwest::Method::PATCH, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::PATCH, url, Some(data), if_unmodified_since)
     }
     pub fn delete_item(
         &self,
         item_key: &str,
-        data: Value,
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url(&format!("items/{}", item_key), None)?;
-        self.write_request(reqwest::Method::DELETE, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::DELETE, url, None, if_unmodified_since)
     }
 
     pub fn create_collection(
@@ -538,7 +541,7 @@ impl Zotero {
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url("collections", None)?;
-        self.write_request(reqwest::Method::POST, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::POST, url, Some(data), if_unmodified_since)
     }
     pub fn update_collection(
         &self,
@@ -547,16 +550,15 @@ impl Zotero {
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url(&format!("collections/{}", collection_id), None)?;
-        self.write_request(reqwest::Method::PUT, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::PUT, url, Some(data), if_unmodified_since)
     }
     pub fn delete_collection(
         &self,
         collection_id: &str,
-        data: Value,
         if_unmodified_since: Option<usize>,
     ) -> Result<Value, ZoteroError> {
         let url = self.build_url(&format!("collections/{}", collection_id), None)?;
-        self.write_request(reqwest::Method::DELETE, url, data, if_unmodified_since)
+        self.write_request(reqwest::Method::DELETE, url, None, if_unmodified_since)
     }
 }
 
