@@ -251,6 +251,8 @@ impl Zotero {
             } else if content_type.starts_with("text/html") {
                 let text = response.text()?;
                 return Ok(Value::String(text));
+            } else if content_type == "" {
+                return Ok(Value::Null);
             } else {
                 return Err(ZoteroError::UnsupportedContentType(
                     content_type.to_string(),
